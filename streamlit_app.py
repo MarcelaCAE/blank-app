@@ -1,109 +1,130 @@
 import cv2
 import numpy as np
-from tensorflow.keras.models import load_model
-import os
-import matplotlib.pyplot as plt
+from tensorflow.keras.models import Sequential, Model
+from tensorflow.keras.layers import Dense, GlobalAveragePooling2D, Dropout
+from tensorflow.keras.applications import MobileNetV2
+from tensorflow.keras.optimizers import Adam
+import streamlit as st
+from tempfile import NamedTemporaryFile
 
-# Função para detectar vagas de estacionamento
+# Função para obter as bounding boxes das vagas de estacionamento
 def get_parking_spots_bboxes(connected_components):
     num_labels, labels = connected_components
-
-    slots = []
+    spots = []
     for i in range(1, num_labels):
         x1, y1, w, h = cv2.boundingRect((labels == i).astype(np.uint8))
-        slots.append([x1, y1, w, h])
+        spots.append([x1, y1, w, h])
+    return spots
 
-    return slots
+# Função para criar o modelo MobileNetV2 e adaptá-lo para nossa tarefa
+def create_mobilenet_model(input_shape=(150, 150, 3), num_classes=1):
+    base_model = MobileNetV2(weights="imagenet", include_top=False, input_shape=input_shape)
+    x = base_model.output
+    x = GlobalAveragePooling2D()(x)
+    x = Dropout(0.2)(x)  # Dropout para evitar overfitting
+    x = Dense(1024, activation="relu")(x)
+    x = Dense(512, activation="relu")(x)
+    predictions = Dense(num_classes, activation="sigmoid")(x)  # Saída binária: vazio (0) ou ocupado (1)
+    
+    model = Model(inputs=base_model.input, outputs=predictions)
+    
+    # Congelar as camadas convolucionais do MobileNetV2 para usar apenas a parte densa
+    for layer in base_model.layers:
+        layer.trainable = False
 
-# Função para prever a ocupação das vagas
-def process_frame(frame, spots, model, batch_size=64):
-    spot_crops_batch = []
-    for spot in spots:
-        x1, y1, w, h = spot
+    model.compile(optimizer=Adam(lr=0.0001), loss="binary_crossentropy", metrics=["accuracy"])
+    return model
 
-        # Recortar a vaga do frame
-        spot_crop = frame[y1:y1 + h, x1:x1 + w, :]
-        spot_crops_batch.append(spot_crop)
-
-        # Processar em lotes
-        if len(spot_crops_batch) == batch_size or spot == spots[-1]:
-            spot_crops_batch_preprocessed = [
-                cv2.resize(spot, (150, 150)) / 255.0 for spot in spot_crops_batch
-            ]
-            spot_crops_batch_preprocessed = np.array(spot_crops_batch_preprocessed)
-
-            # Previsões para o lote
-            spot_status_batch = model.predict(spot_crops_batch_preprocessed)
-            spot_status_batch = (spot_status_batch.flatten() > 0.5).astype(int)
-
-            for i, spot in enumerate(spots[:len(spot_crops_batch)]):
-                x1, y1, w, h = spot
-                spot_status = spot_status_batch[i]
-                if spot_status == 0:  # Vaga vazia
-                    frame = cv2.rectangle(frame, (x1, y1), (x1 + w, y1 + h), (0, 255, 0), 2)  # Verde
-                else:  # Vaga ocupada
-                    frame = cv2.rectangle(frame, (x1, y1), (x1 + w, y1 + h), (0, 0, 255), 2)  # Vermelho
-
-            spot_crops_batch = []
-    return frame
-
-# Função principal para processar vídeo
-def process_video(video_path, mask_path, model, output_path='output_video.avi'):
-    mask = cv2.imread(mask_path, 0)
+# Função para processar a imagem
+def process_image(image, model, mask):
     connected_components = cv2.connectedComponents(mask, 4, cv2.CV_32S)
     spots = get_parking_spots_bboxes(connected_components)
+    
+    spot_crops = []
+    for spot in spots:
+        x1, y1, w, h = spot
+        spot_crop = image[y1:y1 + h, x1:x1 + w, :]
+        spot_crops.append(cv2.resize(spot_crop, (150, 150)) / 255.0)
+    
+    spot_crops = np.array(spot_crops)
+    predictions = model.predict(spot_crops)
+    predictions = (predictions.flatten() > 0.5).astype(int)  # 0 (vazio) ou 1 (ocupado)
 
+    for i, spot in enumerate(spots):
+        x1, y1, w, h = spot
+        color = (0, 255, 0) if predictions[i] == 0 else (0, 0, 255)  # Verde se vazio, vermelho se ocupado
+        image = cv2.rectangle(image, (x1, y1), (x1 + w, y1 + h), color, 2)
+
+    return image
+
+# Função para processar o vídeo
+def process_video(video_path, model, mask):
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        print("Erro ao abrir o vídeo. Verifique o caminho do arquivo.")
-        return
+        st.error("Erro ao abrir o vídeo. Verifique o caminho do arquivo.")
+        return None
 
-    # Configuração do vídeo de saída
-    frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    fps = int(cap.get(cv2.CAP_PROP_FPS))
-    out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'XVID'), fps, (frame_width, frame_height))
+    connected_components = cv2.connectedComponents(mask, 4, cv2.CV_32S)
+    spots = get_parking_spots_bboxes(connected_components)
+    output_frames = []
 
     while True:
         ret, frame = cap.read()
         if not ret:
             break
 
-        frame = process_frame(frame, spots, model)
-        out.write(frame)
+        spot_crops = []
+        for spot in spots:
+            x1, y1, w, h = spot
+            spot_crop = frame[y1:y1 + h, x1:x1 + w, :]
+            spot_crops.append(cv2.resize(spot_crop, (150, 150)) / 255.0)
+
+        spot_crops = np.array(spot_crops)
+        predictions = model.predict(spot_crops)
+        predictions = (predictions.flatten() > 0.5).astype(int)
+
+        for i, spot in enumerate(spots):
+            x1, y1, w, h = spot
+            color = (0, 255, 0) if predictions[i] == 0 else (0, 0, 255)
+            frame = cv2.rectangle(frame, (x1, y1), (x1 + w, y1 + h), color, 2)
+
+        output_frames.append(frame)
 
     cap.release()
-    out.release()
-    print(f"Vídeo processado e salvo em: {output_path}")
+    return output_frames
 
-# Função para processar uma única imagem
-def process_image(image_path, mask_path, model):
-    mask = cv2.imread(mask_path, 0)
-    connected_components = cv2.connectedComponents(mask, 4, cv2.CV_32S)
-    spots = get_parking_spots_bboxes(connected_components)
+# Configuração do Streamlit
+st.title("Classificação de Vagas de Estacionamento")
+st.text("Carregue uma imagem ou vídeo para detectar e classificar vagas de estacionamento.")
 
-    frame = cv2.imread(image_path)
-    frame = process_frame(frame, spots, model)
+# Criar o modelo MobileNetV2
+model = create_mobilenet_model()
 
-    plt.imshow(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-    plt.axis('off')
-    plt.show()
+# Upload da máscara (área de estacionamento)
+mask_path = st.file_uploader("Carregue a máscara da área de estacionamento (.png)", type=["png"])
+if mask_path:
+    mask = cv2.imdecode(np.frombuffer(mask_path.read(), np.uint8), cv2.IMREAD_GRAYSCALE)
 
-# Caminhos para o modelo, máscara e entrada do usuário
-model = create_mobilenet_model()  # Use o modelo criado anteriormente
-mask_path = r'C:\Users\meite\Downloads\parking-lot (4)\parking\mask_crop.png'
+    # Upload de imagem
+    image_file = st.file_uploader("Carregue uma imagem (.jpg, .png)", type=["jpg", "png"])
+    if image_file:
+        image = cv2.imdecode(np.frombuffer(image_file.read(), np.uint8), cv2.IMREAD_COLOR)
+        processed_image = process_image(image, model, mask)
+        st.image(cv2.cvtColor(processed_image, cv2.COLOR_BGR2RGB), caption="Imagem processada", use_column_width=True)
 
-# Escolha da entrada pelo usuário
-input_type = input("Digite 'imagem' para processar uma imagem ou 'video' para processar um vídeo: ").strip().lower()
-if input_type == 'imagem':
-    image_path = input("Digite o caminho para a imagem: ").strip()
-    process_image(image_path, mask_path, model)
-elif input_type == 'video':
-    video_path = input("Digite o caminho para o vídeo: ").strip()
-    process_video(video_path, mask_path, model)
-else:
-    print("Opção inválida. Digite 'imagem' ou 'video'.")
+    # Upload de vídeo
+    video_file = st.file_uploader("Carregue um vídeo (.mp4)", type=["mp4"])
+    if video_file:
+        temp_video = NamedTemporaryFile(delete=False)
+        temp_video.write(video_file.read())
+        temp_video_path = temp_video.name
 
+        frames = process_video(temp_video_path, model, mask)
+        if frames:
+            st.video(temp_video_path)
+            st.success("Vídeo processado com sucesso!")
+        else:
+            st.error("Não foi possível processar o vídeo.")
 
 
 
