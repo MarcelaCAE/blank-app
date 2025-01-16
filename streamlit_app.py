@@ -1,6 +1,6 @@
 import cv2
 import numpy as np
-from tensorflow.keras.models import Sequential, Model
+from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Dense, GlobalAveragePooling2D, Dropout
 from tensorflow.keras.applications import MobileNetV2
 from tensorflow.keras.optimizers import Adam
@@ -76,17 +76,23 @@ def process_video(video_path, model, mask):
         spot_crops = []
         for spot in spots:
             x1, y1, w, h = spot
-            spot_crop = frame[y1:y1 + h, x1:x1 + w, :]
-            spot_crops.append(cv2.resize(spot_crop, (150, 150)) / 255.0)
+            # Verificar se a caixa de corte (bounding box) é válida
+            if w > 0 and h > 0:
+                spot_crop = frame[y1:y1 + h, x1:x1 + w, :]
+                # Verificar se o crop não está vazio e redimensionar
+                if spot_crop.size > 0:
+                    spot_crop_resized = cv2.resize(spot_crop, (150, 150)) / 255.0
+                    spot_crops.append(spot_crop_resized)
+        
+        if len(spot_crops) > 0:
+            spot_crops = np.array(spot_crops)
+            predictions = model.predict(spot_crops)
+            predictions = (predictions.flatten() > 0.5).astype(int)
 
-        spot_crops = np.array(spot_crops)
-        predictions = model.predict(spot_crops)
-        predictions = (predictions.flatten() > 0.5).astype(int)
-
-        for i, spot in enumerate(spots):
-            x1, y1, w, h = spot
-            color = (0, 255, 0) if predictions[i] == 0 else (0, 0, 255)
-            frame = cv2.rectangle(frame, (x1, y1), (x1 + w, y1 + h), color, 2)
+            for i, spot in enumerate(spots):
+                x1, y1, w, h = spot
+                color = (0, 255, 0) if predictions[i] == 0 else (0, 0, 255)
+                frame = cv2.rectangle(frame, (x1, y1), (x1 + w, y1 + h), color, 2)
 
         output_frames.append(frame)
 
@@ -94,38 +100,45 @@ def process_video(video_path, model, mask):
     return output_frames
 
 # Configuração do Streamlit
-st.title("Classificação de Vagas de Estacionamento")
-st.text("Carregue uma imagem ou vídeo para detectar e classificar vagas de estacionamento.")
+st.sidebar.title("Upload de Arquivos")
+upload_choice = st.sidebar.selectbox("Escolha o tipo de upload", ["Imagem", "Vídeo"])
 
 # Criar o modelo MobileNetV2
 model = create_mobilenet_model()
 
-# Upload da máscara (área de estacionamento)
-mask_path = st.file_uploader("Carregue a máscara da área de estacionamento (.png)", type=["png"])
+# Barra lateral para upload da máscara (área de estacionamento)
+mask_path = st.sidebar.file_uploader("Carregue a máscara da área de estacionamento (.png)", type=["png"])
+
 if mask_path:
     mask = cv2.imdecode(np.frombuffer(mask_path.read(), np.uint8), cv2.IMREAD_GRAYSCALE)
 
-    # Upload de imagem
-    image_file = st.file_uploader("Carregue uma imagem (.jpg, .png)", type=["jpg", "png"])
-    if image_file:
-        image = cv2.imdecode(np.frombuffer(image_file.read(), np.uint8), cv2.IMREAD_COLOR)
-        processed_image = process_image(image, model, mask)
-        st.image(cv2.cvtColor(processed_image, cv2.COLOR_BGR2RGB), caption="Imagem processada", use_column_width=True)
+    # Ação de mostrar o processo de carregamento
+    with st.expander("Carregando Arquivo..."):
+        st.write("Aguarde enquanto o arquivo está sendo carregado.")
+    
+    # Upload de imagem ou vídeo
+    if upload_choice == "Imagem":
+        image_file = st.sidebar.file_uploader("Carregue uma imagem (.jpg, .png)", type=["jpg", "png"])
+        if image_file:
+            st.write("Processando imagem...")
+            image = cv2.imdecode(np.frombuffer(image_file.read(), np.uint8), cv2.IMREAD_COLOR)
+            processed_image = process_image(image, model, mask)
+            st.image(cv2.cvtColor(processed_image, cv2.COLOR_BGR2RGB), caption="Imagem processada", use_column_width=True)
 
-    # Upload de vídeo
-    video_file = st.file_uploader("Carregue um vídeo (.mp4)", type=["mp4"])
-    if video_file:
-        temp_video = NamedTemporaryFile(delete=False)
-        temp_video.write(video_file.read())
-        temp_video_path = temp_video.name
+    elif upload_choice == "Vídeo":
+        video_file = st.sidebar.file_uploader("Carregue um vídeo (.mp4)", type=["mp4"])
+        if video_file:
+            st.write("Processando vídeo...")
+            temp_video = NamedTemporaryFile(delete=False)
+            temp_video.write(video_file.read())
+            temp_video_path = temp_video.name
 
-        frames = process_video(temp_video_path, model, mask)
-        if frames:
-            st.video(temp_video_path)
-            st.success("Vídeo processado com sucesso!")
-        else:
-            st.error("Não foi possível processar o vídeo.")
-
+            frames = process_video(temp_video_path, model, mask)
+            if frames:
+                st.video(temp_video_path)
+                st.success("Vídeo processado com sucesso!")
+            else:
+                st.error("Não foi possível processar o vídeo.")
 
 
 
