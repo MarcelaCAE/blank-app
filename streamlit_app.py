@@ -36,7 +36,9 @@ def process_video(video_file):
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         _, thresholded = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)
         
-        raw_data.append(thresholded)
+        # Convert frame to RGB before appending
+        rgb_frame = cv2.cvtColor(thresholded, cv2.COLOR_BGR2RGB)
+        raw_data.append(rgb_frame)
     
     cap.release()
     return raw_data
@@ -82,7 +84,7 @@ with st.expander("Raw Data"):
                 st.write("Raw pixel data of the processed video:")
                 for i, frame in enumerate(raw_data):
                     st.write(f"Frame {i}:")
-                    st.image(frame, channels="BGR")
+                    st.image(frame)  # Now displaying the RGB frames properly
                 
         # Hide the loading message after processing
         st.write("Data processed successfully!")
@@ -96,6 +98,7 @@ if uploaded_file is not None:
     
     elif file_type == "Video":
         st.video(uploaded_file)
+
 
 
 
