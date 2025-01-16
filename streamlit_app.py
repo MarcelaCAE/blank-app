@@ -1,10 +1,3 @@
-import streamlit as st
-
-import streamlit as st
-import tensorflow as tf
-import numpy as np
-import cv2
-
 # Título do aplicativo
 st.title("🎈 Aplicativo de Previsão de Vagas de Estacionamento")
 
