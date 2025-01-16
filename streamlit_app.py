@@ -1,96 +1,92 @@
 import streamlit as st
-import tensorflow as tf
 import numpy as np
+import tensorflow as tf
 import cv2
+from google.colab.patches import cv2_imshow
 
-# Função para carregar o modelo sem cache
-def load_model(uploaded_model):
-    model = tf.keras.models.load_model(uploaded_model)
-    return model
+# Constants
+EMPTY = 0
+NOT_EMPTY = 1
+MODEL_PATH = '/content/drive/MyDrive/computer_vision/parking_lot_contents/parking/saved_models/modelo_parking_lot.keras'
+MODEL = tf.keras.models.load_model(MODEL_PATH)
 
-# Função para processar o vídeo
-def process_video(video_path, mask_path, model):
-    mask = cv2.imdecode(np.frombuffer(mask_path.read(), np.uint8), cv2.IMREAD_GRAYSCALE)
-    cap = cv2.VideoCapture(video_path)
-    connected_components = cv2.connectedComponents(mask, 4, cv2.CV_32S)
-    spots = get_parking_spots_bboxes(connected_components)
+# Function to get parking spot bounding boxes
+def get_parking_spots_bboxes(connected_components):
+    num_labels, labels = connected_components
+    slots = []
+    for i in range(1, num_labels):
+        x1, y1, w, h = cv2.boundingRect((labels == i).astype(np.uint8))
+        slots.append([x1, y1, w, h])
+    return slots
 
-    if not cap.isOpened():
-        raise ValueError("Error opening video file. Check the file path.")
-    
-    output_path = "processed_parking_lot.mp4"
-    # Preparar saída de vídeo
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    fps = int(cap.get(cv2.CAP_PROP_FPS))
-    out = cv2.VideoWriter(output_path, fourcc, fps, (frame_width, frame_height))
-    
-    # Processar frames do vídeo
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
+# Function to predict parking spot status (empty or not)
+def empty_or_not(spot_bgr):
+    img_resized = cv2.resize(spot_bgr, (150, 150))
+    img_resized = np.expand_dims(img_resized, axis=0)
+    img_resized = img_resized / 255.0
+    y_output = MODEL.predict(img_resized)
+    return EMPTY if y_output[0] == 0 else NOT_EMPTY
 
-        spot_crops_batch = []
+# Sidebar for uploading files (image or video)
+st.sidebar.title('Parking Lot Detection')
+uploaded_file = st.sidebar.file_uploader("Upload an image or video", type=['jpg', 'jpeg', 'png', 'mp4'])
+
+if uploaded_file is not None:
+    # Check if the file is an image or video
+    if uploaded_file.type in ["image/jpeg", "image/png", "image/jpg"]:
+        # Process image
+        img = np.array(bytearray(uploaded_file.read()), dtype=np.uint8)
+        img = cv2.imdecode(img, cv2.IMREAD_COLOR)
+        
+        # Display image
+        st.image(img, caption="Uploaded Image", channels="BGR", use_column_width=True)
+
+        # Detect parking spots (dummy process)
+        mask = np.zeros_like(img)  # Placeholder for actual mask
+        connected_components = cv2.connectedComponents(mask, 4, cv2.CV_32S)
+        spots = get_parking_spots_bboxes(connected_components)
+
         for spot in spots:
             x1, y1, w, h = spot
-            spot_crop = frame[y1:y1 + h, x1:x1 + w, :]
-            spot_crops_batch.append(spot_crop)
+            spot_crop = img[y1:y1 + h, x1:x1 + w]
+            status = empty_or_not(spot_crop)
+            color = (0, 255, 0) if status == EMPTY else (0, 0, 255)
+            cv2.rectangle(img, (x1, y1), (x1 + w, y1 + h), color, 2)
 
-            if len(spot_crops_batch) == BATCH_SIZE or spot == spots[-1]:
-                # Pré-processar lote
-                spot_crops_batch_preprocessed = [
-                    cv2.resize(spot, (150, 150)) / 255.0 for spot in spot_crops_batch
-                ]
-                spot_crops_batch_preprocessed = np.array(spot_crops_batch_preprocessed)
+        st.image(img, caption="Parking Spot Detection Result", channels="BGR", use_column_width=True)
 
-                # Fazer previsões
-                spot_status_batch = model.predict(spot_crops_batch_preprocessed)
-                spot_status_batch = (spot_status_batch.flatten() > 0.5).astype(int)
+    elif uploaded_file.type == "video/mp4":
+        # Process video
+        video_bytes = uploaded_file.read()
+        st.video(video_bytes, format="video/mp4", start_time=0)
 
-                # Desenhar retângulos
-                for i, spot in enumerate(spots[:len(spot_crops_batch)]):
-                    x1, y1, w, h = spot
-                    spot_status = spot_status_batch[i]
-                    color = (0, 255, 0) if spot_status == EMPTY else (0, 0, 255)
-                    frame = cv2.rectangle(frame, (x1, y1), (x1 + w, y1 + h), color, 2)
+        # Open video stream
+        cap = cv2.VideoCapture(uploaded_file.name)
 
-                spot_crops_batch = []
+        # Placeholder for actual mask and connected components
+        mask = np.zeros_like((640, 480), dtype=np.uint8)  # Replace with actual mask
+        connected_components = cv2.connectedComponents(mask, 4, cv2.CV_32S)
+        spots = get_parking_spots_bboxes(connected_components)
 
-        out.write(frame)
-
-    cap.release()
-    out.release()
-
-    return output_path
-
-# Sidebar para upload de vídeo e máscara
-st.sidebar.title("Upload de Vídeo e Máscara")
-uploaded_video = st.sidebar.file_uploader("Carregar vídeo", type=["mp4", "avi", "mov"])
-uploaded_mask = st.sidebar.file_uploader("Carregar imagem de máscara", type=["jpg", "png", "jpeg"])
-
-# Carregar o modelo apenas quando o arquivo for enviado (não cacheado)
-uploaded_model = st.sidebar.file_uploader("Carregar o modelo (arquivo .keras ou .h5)", type=["keras", "h5"])
-
-# Verifique se os arquivos foram enviados e se o modelo foi carregado
-if uploaded_model is not None:
-    model = load_model(uploaded_model)
-    st.sidebar.success("Modelo carregado com sucesso!")
-
-    if uploaded_video is not None and uploaded_mask is not None:
-        st.video(uploaded_video)
-
-        # Processar o vídeo com a máscara
-        try:
-            output_path = process_video(uploaded_video, uploaded_mask, model)
-            st.success("Processamento concluído! Você pode baixar o vídeo processado.")
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
             
-            # Disponibilizar o download do vídeo processado
-            with open(output_path, "rb") as file:
-                st.download_button(label="Baixar vídeo processado", data=file, file_name="processed_parking_lot.mp4")
-        except Exception as e:
-            st.error(f"Ocorreu um erro: {e}")
+            # Detect parking spot status and draw boxes on the frame
+            for spot in spots:
+                x1, y1, w, h = spot
+                spot_crop = frame[y1:y1 + h, x1:x1 + w]
+                status = empty_or_not(spot_crop)
+                color = (0, 255, 0) if status == EMPTY else (0, 0, 255)
+                cv2.rectangle(frame, (x1, y1), (x1 + w, y1 + h), color, 2)
+
+            # Display the frame
+            st.image(frame, channels="BGR", caption="Parking Lot Video", use_column_width=True)
+        
+        cap.release()
+
 else:
-    st.warning("Por favor, carregue o modelo, o vídeo e a máscara.")
+    st.info("Please upload an image or a video to get started.")
+
 
