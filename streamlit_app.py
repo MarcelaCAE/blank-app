@@ -44,50 +44,51 @@ def process_video(video_file):
 # App title
 st.title("Parking Lot Detection")
 
-# Add a "loading" message under the title
-st.write("Loading data... Please wait.")
-
-# Sidebar for file upload
-st.sidebar.title("Settings")
-file_type = st.sidebar.selectbox("Choose file type", ["Image", "Video"])
-
-uploaded_file = None
-
-if file_type == "Image":
-    uploaded_file = st.sidebar.file_uploader("Upload Image", type=["jpg", "jpeg", "png"])
+# Create an expander below the title
+with st.expander("Loading Data... Please wait while the file is processed."):
     
-elif file_type == "Video":
-    uploaded_file = st.sidebar.file_uploader("Upload Video", type=["mp4", "avi", "mov"])
+    # Sidebar for file upload
+    st.sidebar.title("Settings")
+    file_type = st.sidebar.selectbox("Choose file type", ["Image", "Video"])
 
-# If a file is uploaded
-if uploaded_file is not None:
-    # Simulate loading time with a progress bar
-    with st.spinner('Processing your file...'):
-        time.sleep(2)  # Simulate the processing time, remove or adjust as needed
+    uploaded_file = None
+
+    if file_type == "Image":
+        uploaded_file = st.sidebar.file_uploader("Upload Image", type=["jpg", "jpeg", "png"])
         
-        if file_type == "Image":
-            image = Image.open(uploaded_file)
-            st.image(image, caption="Uploaded Image", use_column_width=True)
-            processed_image = process_image(image)
-            st.image(processed_image, caption="Processed Image", use_column_width=True)
+    elif file_type == "Video":
+        uploaded_file = st.sidebar.file_uploader("Upload Video", type=["mp4", "avi", "mov"])
+
+    # If a file is uploaded
+    if uploaded_file is not None:
+        # Simulate loading time with a progress bar
+        with st.spinner('Processing your file...'):
+            time.sleep(2)  # Simulate the processing time, remove or adjust as needed
+
+            if file_type == "Image":
+                image = Image.open(uploaded_file)
+                st.image(image, caption="Uploaded Image", use_column_width=True)
+                processed_image = process_image(image)
+                st.image(processed_image, caption="Processed Image", use_column_width=True)
+                
+                # Display raw data in an expandable section
+                with st.expander("Raw Data (Image)"):
+                    st.write("Raw pixel data of the processed image:")
+                    st.write(processed_image)
             
-            # Display raw data in an expandable section
-            with st.expander("Raw Data (Image)"):
-                st.write("Raw pixel data of the processed image:")
-                st.write(processed_image)
-        
-        elif file_type == "Video":
-            st.video(uploaded_file)
-            raw_data = process_video(uploaded_file)
-            
-            # Display raw data in an expandable section
-            with st.expander("Raw Data (Video)"):
-                st.write("Raw pixel data of the processed video:")
-                for i, frame in enumerate(raw_data):
-                    st.write(f"Frame {i}:")
-                    st.image(frame, channels="BGR")
-                    
-    # Hide the loading message after processing
-    st.write("Data processed successfully!")
+            elif file_type == "Video":
+                st.video(uploaded_file)
+                raw_data = process_video(uploaded_file)
+                
+                # Display raw data in an expandable section
+                with st.expander("Raw Data (Video)"):
+                    st.write("Raw pixel data of the processed video:")
+                    for i, frame in enumerate(raw_data):
+                        st.write(f"Frame {i}:")
+                        st.image(frame, channels="BGR")
+                
+        # Hide the loading message after processing
+        st.write("Data processed successfully!")
+
 
 
