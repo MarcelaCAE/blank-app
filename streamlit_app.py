@@ -3,30 +3,28 @@ import tensorflow as tf
 import requests
 from io import BytesIO
 
-# URL do modelo no GitHub (link raw)
-model_url = "https://github.com/MarcelaCAE/blank-app/raw/main/modelo_parking_lot%20(1).keras"
+import streamlit as st
+import gdown
+import tensorflow as tf
+from io import BytesIO
 
-# Função para baixar o modelo
-def load_model_from_github(url):
-    # Baixar o arquivo
-    response = requests.get(url)
-    if response.status_code == 200:
-        # Abrir o modelo a partir do conteúdo baixado
-        model = tf.keras.models.load_model(BytesIO(response.content))
+# Link do Google Drive (certifique-se de pegar o link de compartilhamento público)
+file_url = "https://github.com/MarcelaCAE/blank-app/raw/main/modelo_parking_lot%20(1).keras"
+
+def download_model_from_drive(url):
+    try:
+        # Baixa o arquivo diretamente
+        gdown.download(url, 'modelo_parking_lot.keras', quiet=False)
+        # Carregar o modelo Keras após o download
+        model = tf.keras.models.load_model('modelo_parking_lot.keras')
         return model
-    else:
-        st.error("Erro ao baixar o modelo.")
+    except Exception as e:
+        st.error(f"Erro ao baixar ou carregar o modelo: {e}")
         return None
 
-# Baixar o modelo
-model = load_model_from_github(model_url)
+# Baixar e carregar o modelo
+model = download_model_from_drive(file_url)
 
 if model:
     st.write("Modelo carregado com sucesso!")
-
-    # Aqui você pode adicionar o código para usar o modelo para fazer previsões, etc.
-    # Exemplo de como fazer uma previsão (supondo que o modelo seja para prever algo)
-    # Você pode colocar inputs de dados, fazer previsões, etc.
-
-
 
