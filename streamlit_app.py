@@ -11,7 +11,8 @@ EMPTY = 0
 NOT_EMPTY = 1
 
 # Load the pre-trained MobileNet model (assuming the model is available locally)
-model_path = 'C:\Users\meite\Ironhack Course\templates\modelo_parking_lot (1) (4).keras'
+model_path ='C:/Users/meite/Ironhack Course/templates/modelo_parking_lot (1) (4).keras'
+
 MODEL = tf.keras.models.load_model(model_path)
 
 # Function to preprocess image for model prediction
