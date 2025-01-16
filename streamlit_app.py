@@ -1,144 +1,89 @@
+import streamlit as st
 import cv2
 import numpy as np
-from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Dense, GlobalAveragePooling2D, Dropout
-from tensorflow.keras.applications import MobileNetV2
-from tensorflow.keras.optimizers import Adam
-import streamlit as st
-from tempfile import NamedTemporaryFile
+from PIL import Image
+import tempfile
+import time
 
-# Função para obter as bounding boxes das vagas de estacionamento
-def get_parking_spots_bboxes(connected_components):
-    num_labels, labels = connected_components
-    spots = []
-    for i in range(1, num_labels):
-        x1, y1, w, h = cv2.boundingRect((labels == i).astype(np.uint8))
-        spots.append([x1, y1, w, h])
-    return spots
-
-# Função para criar o modelo MobileNetV2 e adaptá-lo para nossa tarefa
-def create_mobilenet_model(input_shape=(150, 150, 3), num_classes=1):
-    base_model = MobileNetV2(weights="imagenet", include_top=False, input_shape=input_shape)
-    x = base_model.output
-    x = GlobalAveragePooling2D()(x)
-    x = Dropout(0.2)(x)  # Dropout para evitar overfitting
-    x = Dense(1024, activation="relu")(x)
-    x = Dense(512, activation="relu")(x)
-    predictions = Dense(num_classes, activation="sigmoid")(x)  # Saída binária: vazio (0) ou ocupado (1)
+# Function to process the image
+def process_image(image):
+    # Convert the image to a format that OpenCV can process
+    img = np.array(image)
+    img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
     
-    model = Model(inputs=base_model.input, outputs=predictions)
+    # Simulate parking lot detection (just a simple example)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    _, thresholded = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)
     
-    # Congelar as camadas convolucionais do MobileNetV2 para usar apenas a parte densa
-    for layer in base_model.layers:
-        layer.trainable = False
+    return thresholded
 
-    model.compile(optimizer=Adam(lr=0.0001), loss="binary_crossentropy", metrics=["accuracy"])
-    return model
-
-# Função para processar a imagem
-def process_image(image, model, mask):
-    connected_components = cv2.connectedComponents(mask, 4, cv2.CV_32S)
-    spots = get_parking_spots_bboxes(connected_components)
+# Function to process the video
+def process_video(video_file):
+    # Create a temporary file to store the uploaded video
+    with tempfile.NamedTemporaryFile(delete=False) as tmpfile:
+        tmpfile.write(video_file.read())
+        tmpfile_path = tmpfile.name
     
-    spot_crops = []
-    for spot in spots:
-        x1, y1, w, h = spot
-        spot_crop = image[y1:y1 + h, x1:x1 + w, :]
-        spot_crops.append(cv2.resize(spot_crop, (150, 150)) / 255.0)
+    cap = cv2.VideoCapture(tmpfile_path)
     
-    spot_crops = np.array(spot_crops)
-    predictions = model.predict(spot_crops)
-    predictions = (predictions.flatten() > 0.5).astype(int)  # 0 (vazio) ou 1 (ocupado)
-
-    for i, spot in enumerate(spots):
-        x1, y1, w, h = spot
-        color = (0, 255, 0) if predictions[i] == 0 else (0, 0, 255)  # Verde se vazio, vermelho se ocupado
-        image = cv2.rectangle(image, (x1, y1), (x1 + w, y1 + h), color, 2)
-
-    return image
-
-# Função para processar o vídeo
-def process_video(video_path, model, mask):
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        st.error("Erro ao abrir o vídeo. Verifique o caminho do arquivo.")
-        return None
-
-    connected_components = cv2.connectedComponents(mask, 4, cv2.CV_32S)
-    spots = get_parking_spots_bboxes(connected_components)
-    output_frames = []
-
-    while True:
+    raw_data = []
+    while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
             break
-
-        spot_crops = []
-        for spot in spots:
-            x1, y1, w, h = spot
-            # Verificar se a caixa de corte (bounding box) é válida
-            if w > 0 and h > 0:
-                spot_crop = frame[y1:y1 + h, x1:x1 + w, :]
-                # Verificar se o crop não está vazio e redimensionar
-                if spot_crop.size > 0:
-                    spot_crop_resized = cv2.resize(spot_crop, (150, 150)) / 255.0
-                    spot_crops.append(spot_crop_resized)
         
-        if len(spot_crops) > 0:
-            spot_crops = np.array(spot_crops)
-            predictions = model.predict(spot_crops)
-            predictions = (predictions.flatten() > 0.5).astype(int)
-
-            for i, spot in enumerate(spots):
-                x1, y1, w, h = spot
-                color = (0, 255, 0) if predictions[i] == 0 else (0, 0, 255)
-                frame = cv2.rectangle(frame, (x1, y1), (x1 + w, y1 + h), color, 2)
-
-        output_frames.append(frame)
-
-    cap.release()
-    return output_frames
-
-# Configuração do Streamlit
-st.sidebar.title("Upload de Arquivos")
-upload_choice = st.sidebar.selectbox("Escolha o tipo de upload", ["Imagem", "Vídeo"])
-
-# Criar o modelo MobileNetV2
-model = create_mobilenet_model()
-
-# Barra lateral para upload da máscara (área de estacionamento)
-mask_path = st.sidebar.file_uploader("Carregue a máscara da área de estacionamento (.png)", type=["png"])
-
-if mask_path:
-    mask = cv2.imdecode(np.frombuffer(mask_path.read(), np.uint8), cv2.IMREAD_GRAYSCALE)
-
-    # Ação de mostrar o processo de carregamento
-    with st.expander("Carregando Arquivo..."):
-        st.write("Aguarde enquanto o arquivo está sendo carregado.")
+        # Simulate parking lot detection
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        _, thresholded = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)
+        
+        # Convert frame to RGB before appending
+        rgb_frame = cv2.cvtColor(thresholded, cv2.COLOR_BGR2RGB)
+        raw_data.append(rgb_frame)
     
-    # Upload de imagem ou vídeo
-    if upload_choice == "Imagem":
-        image_file = st.sidebar.file_uploader("Carregue uma imagem (.jpg, .png)", type=["jpg", "png"])
-        if image_file:
-            st.write("Processando imagem...")
-            image = cv2.imdecode(np.frombuffer(image_file.read(), np.uint8), cv2.IMREAD_COLOR)
-            processed_image = process_image(image, model, mask)
-            st.image(cv2.cvtColor(processed_image, cv2.COLOR_BGR2RGB), caption="Imagem processada", use_column_width=True)
+    cap.release()
+    return raw_data
 
-    elif upload_choice == "Vídeo":
-        video_file = st.sidebar.file_uploader("Carregue um vídeo (.mp4)", type=["mp4"])
-        if video_file:
-            st.write("Processando vídeo...")
-            temp_video = NamedTemporaryFile(delete=False)
-            temp_video.write(video_file.read())
-            temp_video_path = temp_video.name
+# App title
+st.title("Parking Lot Detection")
 
-            frames = process_video(temp_video_path, model, mask)
-            if frames:
-                st.video(temp_video_path)
-                st.success("Vídeo processado com sucesso!")
-            else:
-                st.error("Não foi possível processar o vídeo.")
+# Sidebar for file upload with unique key for selectbox
+st.sidebar.title("Settings")
+file_type = st.sidebar.selectbox("Choose file type", ["Image", "Video"], key="file_type_selectbox")
+
+uploaded_file = None
+
+if file_type == "Image":
+    uploaded_file = st.sidebar.file_uploader("Upload Image", type=["jpg", "jpeg", "png"], key="image_uploader")
+    
+elif file_type == "Video":
+    uploaded_file = st.sidebar.file_uploader("Upload Video", type=["mp4", "avi", "mov"], key="video_uploader")
+
+# Create an expander for raw data and loading message
+with st.expander("Raw Data"):
+
+    # If a file is uploaded
+    if uploaded_file is not None:
+        # Simulate loading time with a progress bar
+        with st.spinner('Processing your file...'):
+            time.sleep(2)  # Simulate the processing time, remove or adjust as needed
+            
+            if file_type == "Image":
+                image = Image.open(uploaded_file)
+                processed_image = process_image(image)
+                
+                # Display raw data in the expander
+                st.write("Raw pixel data of the processed image:")
+                st.write(processed_image)
+            
+            elif file_type == "Video":
+                raw_data = process_video(uploaded_file)
+                
+                # Display raw data in the expander
+                st.write("Raw pixel data of the processed video:")
+                for i, frame in enumerate(raw_data):
+                    st.write(f"Frame {i}:")
+                    st.image(frame)  # Now displaying the RGB frames properly
+         
 
 
 
