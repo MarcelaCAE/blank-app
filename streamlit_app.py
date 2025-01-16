@@ -60,8 +60,6 @@ elif file_type == "Video":
 
 # Create an expander for raw data and loading message
 with st.expander("Raw Data"):
-    # Show the loading message when processing
-    st.write("Loading data... Please wait.")
 
     # If a file is uploaded
     if uploaded_file is not None:
