@@ -45,7 +45,8 @@ def process_video(video_file):
 st.title("Parking Lot Detection")
 
 # Create an expander below the title
-with st.expander("Loading Data... Please wait while the file is processed."):
+with st.expander("Raw Data"):
+    st.write("Loading data... Please wait.")
     
     # Sidebar for file upload
     st.sidebar.title("Settings")
