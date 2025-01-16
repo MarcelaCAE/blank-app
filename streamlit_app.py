@@ -2,46 +2,52 @@ import streamlit as st
 import cv2
 import numpy as np
 from PIL import Image
+import tensorflow as tf
 import tempfile
 import time
 
-# Function to process the image
-def process_image(image):
-    # Convert the image to a format that OpenCV can process
-    img = np.array(image)
-    img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-    
-    # Simulate parking lot detection (just a simple example)
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    _, thresholded = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)
-    
-    return thresholded
+# Constants for parking spot status
+EMPTY = 0
+NOT_EMPTY = 1
 
-# Function to process the video
-def process_video(video_file):
-    # Create a temporary file to store the uploaded video
-    with tempfile.NamedTemporaryFile(delete=False) as tmpfile:
-        tmpfile.write(video_file.read())
-        tmpfile_path = tmpfile.name
+# Load the pre-trained MobileNet model (assuming the model is available locally)
+model_path = 'C:\Users\meite\Ironhack Course\templates\modelo_parking_lot (1) (4).keras'
+MODEL = tf.keras.models.load_model(model_path)
+
+# Function to preprocess image for model prediction
+def preprocess_image_for_model(image):
+    # Resize the image to match the input size of MobileNet
+    img_resized = cv2.resize(image, (150, 150)) / 255.0
+    return np.expand_dims(img_resized, axis=0)
+
+# Function to detect parking spots and apply model predictions
+def detect_parking_spots(frame, mask):
+    # Find connected components in the mask image
+    connected_components = cv2.connectedComponents(mask, 4, cv2.CV_32S)
+    num_labels, labels = connected_components
+
+    # Extract bounding boxes for each connected component (parking spot)
+    spots = []
+    for i in range(1, num_labels):
+        x1, y1, w, h = cv2.boundingRect((labels == i).astype(np.uint8))
+        spots.append([x1, y1, w, h])
     
-    cap = cv2.VideoCapture(tmpfile_path)
-    
-    raw_data = []
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
+    # Crop each parking spot and apply the model to check if it's empty or not
+    for spot in spots:
+        x1, y1, w, h = spot
+        spot_crop = frame[y1:y1 + h, x1:x1 + w, :]
         
-        # Simulate parking lot detection
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        _, thresholded = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)
-        
-        # Convert frame to RGB before appending
-        rgb_frame = cv2.cvtColor(thresholded, cv2.COLOR_BGR2RGB)
-        raw_data.append(rgb_frame)
-    
-    cap.release()
-    return raw_data
+        # Preprocess the spot crop and make prediction
+        spot_crop_resized = preprocess_image_for_model(spot_crop)
+        spot_status = MODEL.predict(spot_crop_resized)[0][0]
+
+        # Draw bounding box and label (green for empty, red for not empty)
+        if spot_status == EMPTY:
+            frame = cv2.rectangle(frame, (x1, y1), (x1 + w, y1 + h), (0, 255, 0), 2)  # Green for empty
+        else:
+            frame = cv2.rectangle(frame, (x1, y1), (x1 + w, y1 + h), (0, 0, 255), 2)  # Red for not empty
+
+    return frame
 
 # App title
 st.title("Parking Lot Detection")
@@ -60,9 +66,6 @@ elif file_type == "Video":
 
 # Create an expander for raw data and loading message
 with st.expander("Raw Data"):
-    # Show the loading message when processing
-    st.write("Loading data... Please wait.")
-
     # If a file is uploaded
     if uploaded_file is not None:
         # Simulate loading time with a progress bar
@@ -70,34 +73,25 @@ with st.expander("Raw Data"):
             time.sleep(2)  # Simulate the processing time, remove or adjust as needed
             
             if file_type == "Image":
+                # Load the uploaded image
                 image = Image.open(uploaded_file)
-                processed_image = process_image(image)
+                img_array = np.array(image)
                 
-                # Display raw data in the expander
-                st.write("Raw pixel data of the processed image:")
-                st.write(processed_image)
+                # Assume mask is predefined or generate from uploaded image
+                mask = cv2.imread('path_to_mask_image/mask.png', 0)  # Update path to the mask image
+
+                # Detect parking spots in the image and classify as empty or occupied
+                result_frame = detect_parking_spots(img_array, mask)
+                
+                # Display the processed image
+                st.image(result_frame, caption="Processed Image with Parking Spot Detection", use_container_width=True)
             
             elif file_type == "Video":
-                raw_data = process_video(uploaded_file)
-                
-                # Display raw data in the expander
-                st.write("Raw pixel data of the processed video:")
-                for i, frame in enumerate(raw_data):
-                    st.write(f"Frame {i}:")
-                    st.image(frame)  # Now displaying the RGB frames properly
-         
-        # Hide the loading message after processing
-        st.write("Data processed successfully!")
+                # Process the video (you can use a similar approach for video as above)
+                st.write("Video processing is not yet supported in this snippet.")
+                # Optionally, you can adapt the video processing loop to detect parking spots frame by frame.
 
-# Display the uploaded image or video after processing
-if uploaded_file is not None:
-    if file_type == "Image":
-        image = Image.open(uploaded_file)
-        st.image(image, caption="Uploaded Image", use_container_width=True)  # Updated to use_container_width
-        st.image(processed_image, caption="Processed Image", use_container_width=True)  # Updated to use_container_width
-    
-    elif file_type == "Video":
-        st.video(uploaded_file, format="video/mp4", start_time=0)  # No limit on video size
+
 
 
 
