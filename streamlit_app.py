@@ -1,89 +1,198 @@
-import streamlit as st
-import cv2
+import os
 import numpy as np
-from PIL import Image
-import tempfile
-import time
+import tensorflow as tf
+import cv2
+import streamlit as st
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
+from tensorflow.keras.applications import MobileNet
+from sklearn.model_selection import train_test_split
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, classification_report
 
-# Function to process the image
-def process_image(image):
-    # Convert the image to a format that OpenCV can process
-    img = np.array(image)
-    img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+# Função de carregamento de dados
+def load_data(uploaded_files):
+    empty_files = [file for file in uploaded_files if 'empty' in file.name]
+    not_empty_files = [file for file in uploaded_files if 'not_empty' in file.name]
     
-    # Simulate parking lot detection (just a simple example)
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    _, thresholded = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)
+    print(f"Number of empty images: {len(empty_files)}")
+    print(f"Number of not_empty images: {len(not_empty_files)}")
     
-    return thresholded
+    return empty_files, not_empty_files
 
-# Function to process the video
-def process_video(video_file):
-    # Create a temporary file to store the uploaded video
-    with tempfile.NamedTemporaryFile(delete=False) as tmpfile:
-        tmpfile.write(video_file.read())
-        tmpfile_path = tmpfile.name
+# Função para criar generadores de dados a partir de arquivos carregados
+def create_image_generators_from_uploaded(uploaded_files, batch_size=32, img_size=(150, 150)):
+    # Use ImageDataGenerator para carregar as imagens carregadas
+    datagen = ImageDataGenerator(rescale=1./255)
     
-    cap = cv2.VideoCapture(tmpfile_path)
+    # Para facilitar, dividimos as imagens carregadas em diretórios temporários
+    temp_dir = "/tmp/streamlit_images"
+    os.makedirs(temp_dir, exist_ok=True)
     
-    raw_data = []
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
+    # Criar diretórios para 'empty' e 'not_empty' com base no nome dos arquivos
+    empty_dir = os.path.join(temp_dir, 'empty')
+    not_empty_dir = os.path.join(temp_dir, 'not_empty')
+    os.makedirs(empty_dir, exist_ok=True)
+    os.makedirs(not_empty_dir, exist_ok=True)
+
+    # Salve as imagens nos respectivos diretórios
+    for file in uploaded_files:
+        if 'empty' in file.name:
+            file_path = os.path.join(empty_dir, file.name)
+        else:
+            file_path = os.path.join(not_empty_dir, file.name)
         
-        # Simulate parking lot detection
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        _, thresholded = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)
-        
-        # Convert frame to RGB before appending
-        rgb_frame = cv2.cvtColor(thresholded, cv2.COLOR_BGR2RGB)
-        raw_data.append(rgb_frame)
+        with open(file_path, "wb") as f:
+            f.write(file.getvalue())
+
+    # Criar generadores de dados a partir dos diretórios temporários
+    train_datagen = datagen.flow_from_directory(
+        temp_dir,
+        target_size=img_size,
+        batch_size=batch_size,
+        class_mode='binary',
+        subset='training'
+    )
+
+    validation_datagen = datagen.flow_from_directory(
+        temp_dir,
+        target_size=img_size,
+        batch_size=batch_size,
+        class_mode='binary',
+        subset='validation'
+    )
+
+    return train_datagen, validation_datagen
+
+# Função para construir e treinar um modelo CNN
+def train_cnn_model(train_generator, validation_generator, epochs=10):
+    CNN_model = Sequential([
+        Conv2D(32, (3, 3), activation='relu', input_shape=(150, 150, 3)),
+        MaxPooling2D(pool_size=(2, 2)),
+        Conv2D(64, (3, 3), activation='relu'),
+        MaxPooling2D(pool_size=(2, 2)),
+        Conv2D(128, (3, 3), activation='relu'),
+        MaxPooling2D(pool_size=(2, 2)),
+        Flatten(),
+        Dense(128, activation='relu'),
+        Dense(1, activation='sigmoid')  # Camada de saída com ativação sigmoide para binário
+    ])
+
+    CNN_model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+    history = CNN_model.fit(train_generator, epochs=epochs, validation_data=validation_generator)
+
+    return CNN_model, history
+
+# Função para criar o modelo com Transfer Learning usando MobileNet
+def train_mobilenet_model(train_generator, validation_generator, epochs=10):
+    base_model = MobileNet(weights='imagenet', include_top=False, input_shape=(150, 150, 3))
+    base_model.trainable = False
+
+    model = tf.keras.Sequential([
+        base_model,
+        tf.keras.layers.GlobalAveragePooling2D(),
+        tf.keras.layers.Dense(128, activation='relu'),
+        tf.keras.layers.Dense(1, activation='sigmoid')
+    ])
+
+    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+
+    history = model.fit(
+        train_generator,
+        epochs=epochs,
+        validation_data=validation_generator
+    )
+
+    return model, history
+
+# Função de avaliação
+def evaluate_model(model, validation_generator):
+    val_loss, val_acc = model.evaluate(validation_generator)
+    st.write(f'Validation Loss: {val_loss}')
+    st.write(f'Validation Accuracy: {val_acc}')
     
-    cap.release()
-    return raw_data
+    # Gerar as previsões
+    predictions = model.predict(validation_generator, verbose=1)
+    predictions = (predictions > 0.5).astype(int)
 
-# App title
-st.title("Parking Lot Detection")
+    # Relatório de classificação
+    y_true = validation_generator.classes
+    report = classification_report(y_true, predictions, target_names=validation_generator.class_indices)
+    st.text(report)
 
-# Sidebar for file upload with unique key for selectbox
-st.sidebar.title("Settings")
-file_type = st.sidebar.selectbox("Choose file type", ["Image", "Video"], key="file_type_selectbox")
+    # Matriz de confusão
+    conf_matrix = confusion_matrix(y_true, predictions)
+    disp = ConfusionMatrixDisplay(conf_matrix, display_labels=validation_generator.class_indices)
+    disp.plot(cmap='Blues')
+    st.pyplot()
 
-uploaded_file = None
+# Função principal para a interface do Streamlit
+def main():
+    st.title("Parking Lot Occupancy Detection")
 
-if file_type == "Image":
-    uploaded_file = st.sidebar.file_uploader("Upload Image", type=["jpg", "jpeg", "png"], key="image_uploader")
-    
-elif file_type == "Video":
-    uploaded_file = st.sidebar.file_uploader("Upload Video", type=["mp4", "avi", "mov"], key="video_uploader")
+    # Upload de arquivos
+    uploaded_files = st.file_uploader("Carregue as imagens do dataset", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 
-# Create an expander for raw data and loading message
-with st.expander("Raw Data"):
+    if uploaded_files:
+        # Carregar os dados
+        empty_files, not_empty_files = load_data(uploaded_files)
 
-    # If a file is uploaded
-    if uploaded_file is not None:
-        # Simulate loading time with a progress bar
-        with st.spinner('Processing your file...'):
-            time.sleep(2)  # Simulate the processing time, remove or adjust as needed
-            
-            if file_type == "Image":
-                image = Image.open(uploaded_file)
-                processed_image = process_image(image)
-                
-                # Display raw data in the expander
-                st.write("Raw pixel data of the processed image:")
-                st.write(processed_image)
-            
-            elif file_type == "Video":
-                raw_data = process_video(uploaded_file)
-                
-                # Display raw data in the expander
-                st.write("Raw pixel data of the processed video:")
-                for i, frame in enumerate(raw_data):
-                    st.write(f"Frame {i}:")
-                    st.image(frame)  # Now displaying the RGB frames properly
-         
+        # Criar generadores de dados
+        train_generator, validation_generator = create_image_generators_from_uploaded(uploaded_files)
+
+        # Treinar o modelo CNN
+        st.subheader("Treinando o modelo CNN")
+        cnn_model, cnn_history = train_cnn_model(train_generator, validation_generator)
+
+        # Mostrar o histórico de treinamento
+        st.subheader("Gráfico de Acurácia e Perda")
+        fig, axes = plt.subplots(1, 2, figsize=(12, 6))
+
+        axes[0].plot(cnn_history.history['accuracy'], label='Acurácia de Treinamento')
+        axes[0].plot(cnn_history.history['val_accuracy'], label='Acurácia de Validação')
+        axes[0].legend(loc='lower right')
+        axes[0].set_title('Acurácia')
+
+        axes[1].plot(cnn_history.history['loss'], label='Perda de Treinamento')
+        axes[1].plot(cnn_history.history['val_loss'], label='Perda de Validação')
+        axes[1].legend(loc='upper right')
+        axes[1].set_title('Perda')
+
+        st.pyplot(fig)
+
+        # Avaliar o modelo
+        st.subheader("Avaliação do Modelo CNN")
+        evaluate_model(cnn_model, validation_generator)
+
+        # Treinar o modelo MobileNet
+        st.subheader("Treinando o modelo MobileNet")
+        mobilenet_model, mobilenet_history = train_mobilenet_model(train_generator, validation_generator)
+
+        # Mostrar o histórico de treinamento do MobileNet
+        st.subheader("Gráfico de Acurácia e Perda do MobileNet")
+        fig, axes = plt.subplots(1, 2, figsize=(12, 6))
+
+        axes[0].plot(mobilenet_history.history['accuracy'], label='Acurácia de Treinamento')
+        axes[0].plot(mobilenet_history.history['val_accuracy'], label='Acurácia de Validação')
+        axes[0].legend(loc='lower right')
+        axes[0].set_title('Acurácia')
+
+        axes[1].plot(mobilenet_history.history['loss'], label='Perda de Treinamento')
+        axes[1].plot(mobilenet_history.history['val_loss'], label='Perda de Validação')
+        axes[1].legend(loc='upper right')
+        axes[1].set_title('Perda')
+
+        st.pyplot(fig)
+
+        # Avaliar o modelo MobileNet
+        st.subheader("Avaliação do Modelo MobileNet")
+        evaluate_model(mobilenet_model, validation_generator)
+
+if __name__ == "__main__":
+    main()
+
 
 
 
