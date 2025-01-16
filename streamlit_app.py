@@ -3,21 +3,9 @@ import tensorflow as tf
 import numpy as np
 import cv2
 
-# Função para carregar o modelo
+# Função para carregar o modelo sem cache
 def load_model(uploaded_model):
     model = tf.keras.models.load_model(uploaded_model)
-    return model
-
-# Carregar o modelo sem expô-lo para o usuário
-@st.cache_resource  # Usar cache para não recarregar o modelo a cada interação
-def load_and_cache_model():
-    # Aqui você pode carregar seu modelo internamente
-    # Caso queira usar um modelo pré-existente, apenas forneça o caminho ou o upload do arquivo
-    model = None
-    # Exemplo: Carregar um modelo do arquivo enviado
-    uploaded_model = st.file_uploader("Carregar o modelo (arquivo .keras ou .h5)", type=["keras", "h5"])
-    if uploaded_model is not None:
-        model = load_model(uploaded_model)
     return model
 
 # Função para processar o vídeo
@@ -82,22 +70,27 @@ st.sidebar.title("Upload de Vídeo e Máscara")
 uploaded_video = st.sidebar.file_uploader("Carregar vídeo", type=["mp4", "avi", "mov"])
 uploaded_mask = st.sidebar.file_uploader("Carregar imagem de máscara", type=["jpg", "png", "jpeg"])
 
-# Carregar o modelo em segundo plano sem expô-lo ao usuário
-model = load_and_cache_model()
+# Carregar o modelo apenas quando o arquivo for enviado (não cacheado)
+uploaded_model = st.sidebar.file_uploader("Carregar o modelo (arquivo .keras ou .h5)", type=["keras", "h5"])
 
-if uploaded_video is not None and uploaded_mask is not None and model is not None:
-    st.video(uploaded_video)
-    
-    # Processar o vídeo com a máscara
-    try:
-        output_path = process_video(uploaded_video, uploaded_mask, model)
-        st.success("Processamento concluído! Você pode baixar o vídeo processado.")
-        
-        # Disponibilizar o download do vídeo processado
-        with open(output_path, "rb") as file:
-            st.download_button(label="Baixar vídeo processado", data=file, file_name="processed_parking_lot.mp4")
-    except Exception as e:
-        st.error(f"Ocorreu um erro: {e}")
+# Verifique se os arquivos foram enviados e se o modelo foi carregado
+if uploaded_model is not None:
+    model = load_model(uploaded_model)
+    st.sidebar.success("Modelo carregado com sucesso!")
+
+    if uploaded_video is not None and uploaded_mask is not None:
+        st.video(uploaded_video)
+
+        # Processar o vídeo com a máscara
+        try:
+            output_path = process_video(uploaded_video, uploaded_mask, model)
+            st.success("Processamento concluído! Você pode baixar o vídeo processado.")
+            
+            # Disponibilizar o download do vídeo processado
+            with open(output_path, "rb") as file:
+                st.download_button(label="Baixar vídeo processado", data=file, file_name="processed_parking_lot.mp4")
+        except Exception as e:
+            st.error(f"Ocorreu um erro: {e}")
 else:
-    st.warning("Por favor, faça o upload de um vídeo, máscara e do modelo.")
+    st.warning("Por favor, carregue o modelo, o vídeo e a máscara.")
 
