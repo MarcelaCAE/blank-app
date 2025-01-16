@@ -6,4 +6,7 @@ seaborn
 tensorflow==2.13.0
 opencv-python
 opencv-python-headless
-google-colab
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
+google-api-python-client
