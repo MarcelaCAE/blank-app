@@ -1,46 +1,44 @@
-import os
-import cv2
-import numpy as np
+import streamlit as st
 import tensorflow as tf
-from google.colab import files
-from google.colab.patches import cv2_imshow
+import numpy as np
+import cv2
 
-# Constants
-EMPTY = 0
-NOT_EMPTY = 1
-BATCH_SIZE = 64
+# Função para carregar o modelo
+def load_model(uploaded_model):
+    model = tf.keras.models.load_model(uploaded_model)
+    return model
 
-# Load Model
-MODEL_PATH = '/content/drive/MyDrive/computer_vision/parking_lot_contents/parking/saved_models/modelo_parking_lot.keras'
-MODEL = tf.keras.models.load_model(MODEL_PATH)
+# Carregar o modelo sem expô-lo para o usuário
+@st.cache_resource  # Usar cache para não recarregar o modelo a cada interação
+def load_and_cache_model():
+    # Aqui você pode carregar seu modelo internamente
+    # Caso queira usar um modelo pré-existente, apenas forneça o caminho ou o upload do arquivo
+    model = None
+    # Exemplo: Carregar um modelo do arquivo enviado
+    uploaded_model = st.file_uploader("Carregar o modelo (arquivo .keras ou .h5)", type=["keras", "h5"])
+    if uploaded_model is not None:
+        model = load_model(uploaded_model)
+    return model
 
-def get_parking_spots_bboxes(connected_components):
-    """Get bounding boxes for parking spots from connected components."""
-    num_labels, labels = connected_components
-    slots = []
-    for i in range(1, num_labels):
-        x1, y1, w, h = cv2.boundingRect((labels == i).astype(np.uint8))
-        slots.append([x1, y1, w, h])
-    return slots
-
-def process_video(video_path, mask_path, output_path):
-    """Process the video to identify empty and occupied parking spots."""
-    mask = cv2.imread(mask_path, 0)
+# Função para processar o vídeo
+def process_video(video_path, mask_path, model):
+    mask = cv2.imdecode(np.frombuffer(mask_path.read(), np.uint8), cv2.IMREAD_GRAYSCALE)
     cap = cv2.VideoCapture(video_path)
     connected_components = cv2.connectedComponents(mask, 4, cv2.CV_32S)
     spots = get_parking_spots_bboxes(connected_components)
 
     if not cap.isOpened():
         raise ValueError("Error opening video file. Check the file path.")
-
-    # Prepare output video
+    
+    output_path = "processed_parking_lot.mp4"
+    # Preparar saída de vídeo
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = int(cap.get(cv2.CAP_PROP_FPS))
     out = cv2.VideoWriter(output_path, fourcc, fps, (frame_width, frame_height))
-
-    # Process video frames
+    
+    # Processar frames do vídeo
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -53,17 +51,17 @@ def process_video(video_path, mask_path, output_path):
             spot_crops_batch.append(spot_crop)
 
             if len(spot_crops_batch) == BATCH_SIZE or spot == spots[-1]:
-                # Preprocess batch
+                # Pré-processar lote
                 spot_crops_batch_preprocessed = [
                     cv2.resize(spot, (150, 150)) / 255.0 for spot in spot_crops_batch
                 ]
                 spot_crops_batch_preprocessed = np.array(spot_crops_batch_preprocessed)
 
-                # Predict batch
-                spot_status_batch = MODEL.predict(spot_crops_batch_preprocessed)
+                # Fazer previsões
+                spot_status_batch = model.predict(spot_crops_batch_preprocessed)
                 spot_status_batch = (spot_status_batch.flatten() > 0.5).astype(int)
 
-                # Draw rectangles
+                # Desenhar retângulos
                 for i, spot in enumerate(spots[:len(spot_crops_batch)]):
                     x1, y1, w, h = spot
                     spot_status = spot_status_batch[i]
@@ -77,20 +75,29 @@ def process_video(video_path, mask_path, output_path):
     cap.release()
     out.release()
 
-# Sidebar Interface
-print("Upload the mask image for the parking lot:")
-mask_file = files.upload()
-mask_path = list(mask_file.keys())[0]
+    return output_path
 
-print("Upload the video for processing:")
-video_file = files.upload()
-video_path = list(video_file.keys())[0]
+# Sidebar para upload de vídeo e máscara
+st.sidebar.title("Upload de Vídeo e Máscara")
+uploaded_video = st.sidebar.file_uploader("Carregar vídeo", type=["mp4", "avi", "mov"])
+uploaded_mask = st.sidebar.file_uploader("Carregar imagem de máscara", type=["jpg", "png", "jpeg"])
 
-output_path = "processed_parking_lot.mp4"
+# Carregar o modelo em segundo plano sem expô-lo ao usuário
+model = load_and_cache_model()
 
-try:
-    process_video(video_path, mask_path, output_path)
-    print("Processing complete! Download your processed video below.")
-    files.download(output_path)
-except Exception as e:
-    print(f"An error occurred: {e}")
+if uploaded_video is not None and uploaded_mask is not None and model is not None:
+    st.video(uploaded_video)
+    
+    # Processar o vídeo com a máscara
+    try:
+        output_path = process_video(uploaded_video, uploaded_mask, model)
+        st.success("Processamento concluído! Você pode baixar o vídeo processado.")
+        
+        # Disponibilizar o download do vídeo processado
+        with open(output_path, "rb") as file:
+            st.download_button(label="Baixar vídeo processado", data=file, file_name="processed_parking_lot.mp4")
+    except Exception as e:
+        st.error(f"Ocorreu um erro: {e}")
+else:
+    st.warning("Por favor, faça o upload de um vídeo, máscara e do modelo.")
+
